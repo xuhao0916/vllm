@@ -33,6 +33,10 @@ _GENERATION_MODELS = {
     "LlamaForCausalLM": ("llama", "LlamaForCausalLM"),
     "LlavaForConditionalGeneration":
     ("llava", "LlavaForConditionalGeneration"),
+    "LlavaQwen2ForCausalLM":
+    ("dg_vlm", "LlavaQwen2ForConditionalGeneration"),
+    "LlavaNextQwen2ForCausalLM":
+    ("dg_vlm_hd", "LlavaNextQwen2ForConditionalGeneration"),
     "LlavaNextForConditionalGeneration":
     ("llava_next", "LlavaNextForConditionalGeneration"),
     # For decapoda-research/llama-*
