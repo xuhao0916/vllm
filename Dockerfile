@@ -5,29 +5,36 @@
 # docs/source/dev/dockerfile/dockerfile.rst and
 # docs/source/assets/dev/dockerfile-stages-dependency.png
 
-ARG CUDA_VERSION=12.4.1
+ARG CUDA_VERSION=12.3.1
 #################### BASE BUILD IMAGE ####################
 # prepare basic build environment
-FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS base
+FROM mirror.ccs.tencentyun.com/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS base
+# FROM dockerhub.deepglint.com/lse/triton_trt_llm AS base
 
-ARG CUDA_VERSION=12.4.1
+ARG CUDA_VERSION=12.3.1
 ARG PYTHON_VERSION=3
+ARG proxy_val=""
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV http_proxy=$proxy_val
+ENV https_proxy=$proxy_val
 
-RUN echo 'tzdata tzdata/Areas select America' | debconf-set-selections \
-    && echo 'tzdata tzdata/Zones/America select Los_Angeles' | debconf-set-selections \
-    && apt-get update -y \
-    && apt-get install -y ccache software-properties-common \
-    && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update -y \
-    && apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv python3-pip \
-    && if [ "${PYTHON_VERSION}" != "3" ]; then update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1; fi \
-    && python3 --version \
-    && python3 -m pip --version
+# RUN echo 'tzdata tzdata/Areas select America' | debconf-set-selections \
+#     && echo 'tzdata tzdata/Zones/America select Los_Angeles' | debconf-set-selections \
+#     && apt-get update -y \
+#     && apt-get install -y ccache software-properties-common \
+#     && add-apt-repository ppa:deadsnakes/ppa \
+#     && apt-get update -y \
+#     && apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv python3-pip \
+#     && if [ "${PYTHON_VERSION}" != "3" ]; then update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1; fi \
+#     && python3 --version \
+#     && python3 -m pip --version
 
 RUN apt-get update -y \
     && apt-get install -y python3-pip git curl sudo
+
+RUN pip config set global.index-url https://mirrors.cloud.tencent.com/pypi/simple
+RUN pip config set install.trusted-host mirrors.cloud.tencent.com
 
 # Workaround for https://github.com/openai/triton/issues/2507 and
 # https://github.com/pytorch/pytorch/issues/107960 -- hopefully
@@ -126,12 +133,17 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 #################### vLLM installation IMAGE ####################
 # image with vLLM installed
-FROM nvidia/cuda:${CUDA_VERSION}-base-ubuntu22.04 AS vllm-base
+# FROM nvidia/cuda:${CUDA_VERSION}-base-ubuntu22.04 AS vllm-base
+FROM mirror.ccs.tencentyun.com/nvidia/cuda:${CUDA_VERSION}-base-ubuntu22.04 AS vllm-base
+
 ARG CUDA_VERSION=12.4.1
 WORKDIR /vllm-workspace
 
 RUN apt-get update -y \
     && apt-get install -y python3-pip git vim
+
+RUN pip config set global.index-url https://mirrors.cloud.tencent.com/pypi/simple
+RUN pip config set install.trusted-host mirrors.cloud.tencent.com
 
 # Workaround for https://github.com/openai/triton/issues/2507 and
 # https://github.com/pytorch/pytorch/issues/107960 -- hopefully
