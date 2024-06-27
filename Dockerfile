@@ -54,7 +54,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # can be useful for both `dev` and `test`
 # explicitly set the list to avoid issues with torch 2.2
 # see https://github.com/pytorch/pytorch/pull/123243
-ARG torch_cuda_arch_list='7.0 7.5 8.0 8.6 8.9 9.0+PTX'
+ARG torch_cuda_arch_list='7.0 7.5 8.0 8.6 8.9 9.0'
 ENV TORCH_CUDA_ARCH_LIST=${torch_cuda_arch_list}
 #################### BASE BUILD IMAGE ####################
 
@@ -62,6 +62,8 @@ ENV TORCH_CUDA_ARCH_LIST=${torch_cuda_arch_list}
 FROM base AS build
 
 ARG PYTHON_VERSION=3
+ARG torch_cuda_arch_list='7.0 7.5 8.0 8.6 8.9 9.0'
+ENV TORCH_CUDA_ARCH_LIST=${torch_cuda_arch_list}
 
 # install build dependencies
 COPY requirements-build.txt requirements-build.txt

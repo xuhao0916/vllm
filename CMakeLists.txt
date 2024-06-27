@@ -34,6 +34,8 @@ set(HIP_SUPPORTED_ARCHS "gfx906;gfx908;gfx90a;gfx940;gfx941;gfx942;gfx1030;gfx11
 set(TORCH_SUPPORTED_VERSION_CUDA "2.3.0")
 set(TORCH_SUPPORTED_VERSION_ROCM_5X "2.0.1")
 set(TORCH_SUPPORTED_VERSION_ROCM_6X "2.1.1")
+set(TORCH_CUDA_ARCH_LIST "8.0 8.6 8.9 9.0")
+message(STATUS "TORCH_CUDA_ARCH_LIST: ${TORCH_CUDA_ARCH_LIST}")
 
 #
 # Try to find python package with an executable that exactly matches
