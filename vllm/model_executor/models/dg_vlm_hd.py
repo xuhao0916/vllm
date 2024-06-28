@@ -325,7 +325,7 @@ class LlavaQwen2Model(nn.Module):
             config.hidden_size,
         )
         print(f'embed_tokens {self.embed_tokens}')
-        print(f'Qwen2 config {config}')
+        # print(f'Qwen2 config {config}')
         self.layers = nn.ModuleList([
             Qwen2DecoderLayer(config, cache_config, quant_config)
             for _ in range(config.num_hidden_layers)
@@ -376,6 +376,13 @@ class LlavaNextQwen2ForConditionalGeneration(VisionLanguageModelBase):
                 VisionLanguageConfig.ImageInputType.PIXEL_VALUES):
             vision_tower = getattr(config, 'mm_vision_tower',
                                    getattr(config, 'vision_tower', None))
+            logger.info(f'vision_tower {vision_tower}')
+            last_slash_index = vision_tower.rfind('/')
+            if last_slash_index != -1:
+                vision_tower = config._name_or_path + vision_tower[last_slash_index:]
+            else:
+                vision_tower = config._name_or_path + '/' + vision_tower
+
             self.vision_tower = UnicomVisionTower(vision_tower, config)
         else:
             raise TypeError("Image features are not supported by DG-VLM-HD")
