@@ -1,0 +1,3 @@
+[submodule "oaip"]
+	path = oaip
+	url = git@gitlab.deepglint.com:guoqingjiang/oaip.git
