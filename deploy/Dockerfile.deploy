@@ -1,0 +1,22 @@
+ARG BASE_IMAGE=""
+
+FROM ${BASE_IMAGE} as base
+
+ARG VLLM_COMMITID=""
+ARG OAIP_COMMITID=""
+ARG IMAGE=""
+ARG proxy_val=""
+
+ENV http_proxy=$proxy_val
+ENV https_proxy=$proxy_val
+ENV DEPLOY_BASE_IMAGE=${BASE_IMAGE}
+ENV DEPLOY_IMAGE=${IMAGE}
+ENV VLLM_COMMITID=$VLLM_COMMITID
+ENV OAIP_COMMITID=$OAIP_COMMITID
+
+WORKDIR /vllm
+COPY . .
+RUN bash /vllm/thirdparty/install.sh && rm -rf /vllm/thirdparty
+
+ENV http_proxy=""
+ENV https_proxy=""
