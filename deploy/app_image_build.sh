@@ -5,9 +5,9 @@ set -ex
 
 root=$(dirname $(dirname $(realpath $0)))
 
-url=$(jq -r .url $root/deploy/version.json)
-tag=$(jq -r .tag $root/deploy/version.json)
-base_image=$(jq -r .base $root/deploy/version.json)
+url=$(jq -r .url $root/deploy/VERSION.json)
+tag=$(jq -r .tag $root/deploy/VERSION.json)
+base_image=$(jq -r .base $root/deploy/VERSION.json)
 
 pushd $root
 # get commit ids

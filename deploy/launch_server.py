@@ -8,10 +8,7 @@ import pathlib
 import subprocess
 from pathlib import Path
 import time
-
 import torch
-
-
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
@@ -37,32 +34,10 @@ def parse_arguments():
         help="path to oaip, default: /app/oaip, set to `none` to disable",
     )
     parser.add_argument(
-        "--schema",
-        default=None,
-        required=False,
-        help="image processing schema, input_feature/vision_tower/None",
-    )
-    parser.add_argument(
-        "--repo",
-        type=str,
-        default=None,
-        help="path to backend ensemble pipeline definition",
-    )
-    # by default, user should mount the engine to /engine and run
-    parser.add_argument(
-        "--engine",
-        type=str,
-        default=None,
-        help="path to tensorrt-llm engine to run",
-    )
-    parser.add_argument(
         "--devices",
         type=str,
         default=None,
         help="specify cuda devices to use, like `0,1,2,3`",
-    )
-    parser.add_argument(
-        "--tritonserver", type=str, default=None, help="specify triton server app path"
     )
     return parser.parse_args()
 
@@ -108,7 +83,7 @@ def get_vllm_cmd(tp_size, model, address, devices, image_size, feature_size, gpu
                 --image-input-type pixel_values --image-token-id 151646 \
                 --image-input-shape {} --image-feature-size {} \
                 --disable-log-requests --gpu-memory-utilization {} \
-                --chat-template /app/vllm/examples/template_chatml.jinja".format(
+                --chat-template /vllm/examples/template_chatml.jinja".format(
                     model,host, port, tp_size, input_shape, feature_size, gpu_memory_utilization
                 )
     # print(cmd)
@@ -192,8 +167,8 @@ def decide_mem_fraction():
         print("GPU类型：", torch.cuda.get_device_name(0))
         gpu_type = torch.cuda.get_device_name(0).lower()
         if 'T4' in gpu_type:
-            print("T4: set frac = 0.5")
-            frac = 0.5
+            print("T4: set frac = 0.6")
+            frac = 0.6
         elif '3090' in gpu_type:
             print("3090: set frac = 0.9")
             frac = 0.9
@@ -211,7 +186,7 @@ class Args:
 def main(args):
     processes = {}
     # startup oaip if required, before triton startup
-    oaip = args.oaip if args.oaip else "/app/oaip"
+    oaip = args.oaip if args.oaip else "/vllm/oaip"
     if oaip != 'none':
         assert os.path.exists(oaip), f"oaip not found: {oaip}"
         oaip = f"{oaip} -config {args.config}"
@@ -227,8 +202,9 @@ def main(args):
 
     feature_size = get_llava_feature_size(args.model, args.process_image_size)
     tp_size = get_vllm_tp_size(args.devices)
-    if args.gpu_mem_fraction is None or args.gpu_mem_fraction == 0:
-        gpu_mem_fraction = decide_mem_fraction()
+
+    gpu_mem_fraction = decide_mem_fraction() if args.gpu_mem_fraction is None or args.gpu_mem_fraction == 0 \
+        else args.gpu_mem_fraction
 
     cmd = get_vllm_cmd(tp_size, args.model, args.address, args.devices, args.process_image_size, feature_size, gpu_mem_fraction)
     print(">>> ", cmd)
