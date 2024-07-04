@@ -83,6 +83,7 @@ def get_vllm_cmd(tp_size, model, address, devices, image_size, feature_size, gpu
                 --image-input-type pixel_values --image-token-id 151646 \
                 --image-input-shape {} --image-feature-size {} \
                 --disable-log-requests --gpu-memory-utilization {} \
+                --max-model-len 4096 \
                 --chat-template /vllm/examples/template_chatml.jinja".format(
                     model,host, port, tp_size, input_shape, feature_size, gpu_memory_utilization
                 )
@@ -167,8 +168,8 @@ def decide_mem_fraction():
         print("GPU类型：", torch.cuda.get_device_name(0))
         gpu_type = torch.cuda.get_device_name(0).lower()
         if 'T4' in gpu_type:
-            print("T4: set frac = 0.6")
-            frac = 0.6
+            print("T4: set frac = 0.9")
+            frac = 0.9
         elif '3090' in gpu_type:
             print("3090: set frac = 0.9")
             frac = 0.9
