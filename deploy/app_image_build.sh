@@ -1,12 +1,10 @@
 #!/bin/bash
 set -ex
 
-
-
 root=$(dirname $(dirname $(realpath $0)))
 
 url=$(jq -r .url $root/deploy/VERSION.json)
-tag=$(jq -r .tag $root/deploy/VERSION.json)
+tag="$(jq -r .tag $root/deploy/VERSION.json)-$(arch)"
 base_image=$(jq -r .base $root/deploy/VERSION.json)
 
 pushd $root

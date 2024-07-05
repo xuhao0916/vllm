@@ -1,5 +1,5 @@
 {
     "base": "dockerhub.deepglint.com/lse/vllm:dev-0.0.2",
-    "url": "dockerhub.deepglint.com/lse/vllm",
-    "tag": "dev-0.1.1"
+    "url": "dockerhub.deepglint.com/lse/lse",
+    "tag": "1.0.2-vllm"
 }

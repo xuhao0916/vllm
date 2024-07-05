@@ -141,7 +141,7 @@ def get_llava_feature_size(model, image_size):
     print(f'model {model}, image size {image_size}')
     config_file_path = os.path.join(model, 'config.json')
     assert os.path.exists(config_file_path) , f'{config_file_path} no config.json ?!'
-    with open('/models/llava-7b-unicom-qwen2-hd-800k/config.json', 'r') as fp:
+    with open(config_file_path, 'r') as fp:
         js = json.load(fp)
 
     image_grid_pinpoints = (
