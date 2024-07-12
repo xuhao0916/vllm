@@ -165,8 +165,8 @@ def get_llava_feature_size(model, image_size):
 
 def decide_mem_fraction():
     assert torch.cuda.is_available(), f"cuda is not available"
-    print("GPU类型：", torch.cuda.get_device_name(0))
-    gpu_type = torch.cuda.get_device_name(0).lower()
+    gpu_type = torch.cuda.get_device_name(0)
+    print("GPU类型：", gpu_type)
     if 'T4' in gpu_type:
         print("T4: set frac = 0.9")
         frac = 0.9
