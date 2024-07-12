@@ -222,7 +222,7 @@ def input_processor(ctx: InputContext, llm_inputs: LLMInputs):
     hf_config = ctx.get_hf_config(LlavaNextConfig)
     hf_config.image_token_index = 151646
     vision_config = hf_config.vision_config
-    logger.info(f'vision config {vision_config}')
+    # logger.info(f'vision config {vision_config}')
 
     image_data = multi_modal_data["image"]
     if isinstance(image_data, Image.Image):
@@ -233,7 +233,7 @@ def input_processor(ctx: InputContext, llm_inputs: LLMInputs):
             input_height=height,
             input_width=width,
         )
-        logger.info(f'image_feature_size: {image_feature_size}')
+        # logger.info(f'image_feature_size: {image_feature_size}')
     elif isinstance(image_data, torch.Tensor):
         raise NotImplementedError("Embeddings input is not supported yet")
     else:

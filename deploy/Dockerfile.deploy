@@ -15,6 +15,9 @@ ENV VLLM_COMMITID=$VLLM_COMMITID
 ENV OAIP_COMMITID=$OAIP_COMMITID
 
 WORKDIR /vllm
+#fix base image, delete while base image updated
+RUN rm /vllm/oaip -r
+
 COPY . .
 RUN bash /vllm/thirdparty/install.sh && rm -rf /vllm/thirdparty
 

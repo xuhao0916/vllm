@@ -68,100 +68,29 @@ def get_vllm_tp_size(devices):
         print(f'vllm tp size {tp}')
         return tp
 
-def get_vllm_cmd(tp_size, model, address, devices, image_size, feature_size, gpu_memory_utilization):
+def get_vllm_cmd(tp_size, model, address, devices, gpu_memory_utilization, max_model_len=None, template=None):
     cmd = ""
     if devices and len(devices) > 0:
         cmd = "CUDA_VISIBLE_DEVICES=" + devices + " "
 
     host = address.split(':')[0]
     port = address.split(':')[1]
-    input_shape_list = [1,3,image_size[0],image_size[1]]
-    input_shape =  ','.join(str(x) for x in input_shape_list)
 
+    chat_template = (
+        template if template is not None
+        else "/vllm/examples/template_chatml.jinja"
+    )
     cmd += "python -m vllm.entrypoints.openai.api_server \
                 --model {} --host {} --port {} --tensor-parallel-size {} \
-                --image-input-type pixel_values --image-token-id 151646 \
-                --image-input-shape {} --image-feature-size {} \
                 --disable-log-requests --gpu-memory-utilization {} \
-                --max-model-len 4096 \
-                --chat-template /vllm/examples/template_chatml.jinja".format(
-                    model,host, port, tp_size, input_shape, feature_size, gpu_memory_utilization
+                --chat-template {}".format(
+                    model, host, port, tp_size, gpu_memory_utilization, chat_template
                 )
+    if max_model_len and max_model_len != 0:
+        cmd += " --max-model-len {}".format(max_model_len)
+
     # print(cmd)
     return cmd
-
-def select_best_resolution(original_size: tuple, possible_resolutions: list) -> tuple:
-    """
-    Selects the best resolution from a list of possible resolutions based on the original size.
-
-    This is done by calculating the effective and wasted resolution for each possible resolution.
-
-    The best fit resolution is the one that maximizes the effective resolution and minimizes the wasted resolution.
-
-    Args:
-        original_size (tuple):
-            The original size of the image in the format (height, width).
-        possible_resolutions (list):
-            A list of possible resolutions in the format [(height1, width1), (height2, width2), ...].
-
-    Returns:
-        tuple: The best fit resolution in the format (height, width).
-    """
-    original_height, original_width = original_size
-    best_fit = None
-    max_effective_resolution = 0
-    min_wasted_resolution = float("inf")
-
-    for height, width in possible_resolutions:
-        scale = min(width / original_width, height / original_height)
-        downscaled_width, downscaled_height = int(original_width * scale), int(original_height * scale)
-        effective_resolution = min(downscaled_width * downscaled_height, original_width * original_height)
-        wasted_resolution = (width * height) - effective_resolution
-
-        if effective_resolution > max_effective_resolution or (
-            effective_resolution == max_effective_resolution and wasted_resolution < min_wasted_resolution
-        ):
-            max_effective_resolution = effective_resolution
-            min_wasted_resolution = wasted_resolution
-            best_fit = (height, width)
-
-    return best_fit
-
-def divide_to_patches(image_size, patch_size: int):
-    patch_cnt = 0
-    height, width = image_size
-    for i in range(0, height, patch_size):
-        for j in range(0, width, patch_size):
-            patch_cnt += 1
-            
-    return patch_cnt
-
-def get_llava_feature_size(model, image_size):
-    model = model.strip()
-    print(f'model {model}, image size {image_size}')
-    config_file_path = os.path.join(model, 'config.json')
-    assert os.path.exists(config_file_path) , f'{config_file_path} no config.json ?!'
-    with open(config_file_path, 'r') as fp:
-        js = json.load(fp)
-
-    image_grid_pinpoints = (
-        js['image_grid_pinpoints'] if js['image_grid_pinpoints'] is not None
-        else [[336, 672], [672, 336], [672, 672], [1008, 336], [336, 1008]]
-    )
-
-    patch_size = 336
-    preprocessor_config = os.path.join(model, 'preprocessor_config.json')
-    if os.path.exists(preprocessor_config):
-        with open(preprocessor_config, 'r') as fp:
-            js = json.load(fp)
-            patch_size = js['crop_size']
-
-
-    best_resolution = select_best_resolution(image_size, image_grid_pinpoints)
-    patches_cnt = divide_to_patches(best_resolution, patch_size)
-    print(f'patch cnt: {patches_cnt}')
-    feature_size = (1 + patches_cnt) * 576
-    return feature_size
 
 def decide_mem_fraction():
     assert torch.cuda.is_available(), f"cuda is not available"
@@ -201,13 +130,12 @@ def main(args):
     if args.timeout is not None and args.timeout > 60: 
         os.environ["VLLM_ENGINE_ITERATION_TIMEOUT_S"] = str(args.timeout)
 
-    feature_size = get_llava_feature_size(args.model, args.process_image_size)
     tp_size = get_vllm_tp_size(args.devices)
 
     gpu_mem_fraction = decide_mem_fraction() if args.gpu_mem_fraction is None or args.gpu_mem_fraction == 0 \
         else args.gpu_mem_fraction
 
-    cmd = get_vllm_cmd(tp_size, args.model, args.address, args.devices, args.process_image_size, feature_size, gpu_mem_fraction)
+    cmd = get_vllm_cmd(tp_size, args.model, args.address, args.devices, gpu_mem_fraction, args.max_model_len, args.chat_template)
     print(">>> ", cmd)
     processes['vllm'] = subprocess.Popen(cmd, shell=True, preexec_fn=os.setsid)
 
@@ -275,7 +203,9 @@ if __name__ == "__main__":
     setval("timeout", 60, "engine", "vllm", "timeout")
     setval("model", None, "engine", "vllm", "model")
     setval("gpu_mem_fraction", None, "engine", "vllm", "gpuMemFraction")
-    setval("process_image_size", [1920, 1080], "engine", "vllm", "process_image_size")
+    setval("max_model_len", None, "engine", "vllm", "maxLen")
+    setval("chat_template", None, "engine", "vllm", "template")
+
     assert args.model is not None and len(args.model) > 0
     assert args.address is not None and len(args.address) > 0
 
