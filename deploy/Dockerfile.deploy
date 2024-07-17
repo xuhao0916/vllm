@@ -19,6 +19,5 @@ WORKDIR /vllm
 COPY . .
 RUN bash /vllm/thirdparty/install.sh && rm -rf /vllm/thirdparty
 
-RUN history -c
 ENV http_proxy=""
 ENV https_proxy=""
