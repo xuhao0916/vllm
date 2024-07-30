@@ -2,7 +2,9 @@
 import argparse
 import json
 import random
+import os
 import time
+import threading
 from typing import List, Optional, Tuple
 
 import torch
@@ -19,6 +21,10 @@ from vllm.inputs import TokensPrompt
 
 # Result in the max possible feature size (2x2 grid of 336x336px tiles)
 MAX_IMAGE_FEATURE_SIZE_HEIGHT = MAX_IMAGE_FEATURE_SIZE_WIDTH = 448
+
+# 存储 GPU 显存使用的最大值
+max_used = {}
+max_used_lock = threading.Lock()
 
 def sample_requests(
     dataset_path: str,
@@ -153,88 +159,39 @@ def run_vllm(
     end = time.perf_counter()
     return (end - start) / loop
 
+# 获取 NVIDIA GPU 显存信息
+def get_gpu_memory_info(gpus):
+    try:
+        output = os.popen('nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,nounits,noheader').read().strip()
+        gpu_info = []
+        for line in output.split('\n'):
+            index, used, total = line.split(',')
+            if int(index) in gpus:
+                gpu_info.append((int(index), int(used), int(total)))
+        return gpu_info
+    except:
+        return []
 
-def run_hf(
-    requests: List[Tuple[str, int, int]],
-    model: str,
-    tokenizer: PreTrainedTokenizerBase,
-    n: int,
-    use_beam_search: bool,
-    max_batch_size: int,
-    trust_remote_code: bool,
-) -> float:
-    assert not use_beam_search
-    llm = AutoModelForCausalLM.from_pretrained(
-        model, torch_dtype=torch.float16, trust_remote_code=trust_remote_code)
-    if llm.config.model_type == "llama":
-        # To enable padding in the HF backend.
-        tokenizer.pad_token = tokenizer.eos_token
-    llm = llm.cuda()
-
-    pbar = tqdm(total=len(requests))
-    start = time.perf_counter()
-    batch: List[str] = []
-    max_prompt_len = 0
-    max_output_len = 0
-    for i in range(len(requests)):
-        prompt, prompt_len, output_len = requests[i]
-        # Add the prompt to the batch.
-        batch.append(prompt)
-        max_prompt_len = max(max_prompt_len, prompt_len)
-        max_output_len = max(max_output_len, output_len)
-        if len(batch) < max_batch_size and i != len(requests) - 1:
-            # Check if we can add more requests to the batch.
-            _, next_prompt_len, next_output_len = requests[i + 1]
-            if (max(max_prompt_len, next_prompt_len) +
-                    max(max_output_len, next_output_len)) <= 2048:
-                # We can add more requests to the batch.
-                continue
-
-        # Generate the sequences.
-        input_ids = tokenizer(batch, return_tensors="pt",
-                              padding=True).input_ids
-        llm_outputs = llm.generate(
-            input_ids=input_ids.cuda(),
-            do_sample=not use_beam_search,
-            num_return_sequences=n,
-            temperature=1.0,
-            top_p=1.0,
-            use_cache=True,
-            max_new_tokens=max_output_len,
-        )
-        # Include the decoding time.
-        tokenizer.batch_decode(llm_outputs, skip_special_tokens=True)
-        pbar.update(len(batch))
-
-        # Clear the batch.
-        batch = []
-        max_prompt_len = 0
-        max_output_len = 0
-    end = time.perf_counter()
-    return end - start
-
-
-def run_mii(
-    requests: List[Tuple[str, int, int]],
-    model: str,
-    tensor_parallel_size: int,
-    output_len: int,
-) -> float:
-    from mii import client, serve
-    llm = serve(model, tensor_parallel=tensor_parallel_size)
-    prompts = [prompt for prompt, _, _ in requests]
-
-    start = time.perf_counter()
-    llm.generate(prompts, max_new_tokens=output_len)
-    end = time.perf_counter()
-    client = client(model)
-    client.terminate_server()
-    return end - start
-
+# 后台线程，统计 GPU 显存使用情况
+def monitor_gpu(gpu_id):
+    gpus = list(map(int, gpu_id.split(",")))
+    print(f'used gpus {gpus}')
+    while True:
+        gpu_info = get_gpu_memory_info(gpus)
+        with max_used_lock:
+            for index, used, total in gpu_info:
+                if index not in max_used or used > max_used[index][0]:
+                    max_used[index] = (used, total)
+        time.sleep(2)  # 每 2 秒记录一次
 
 def main(args: argparse.Namespace):
     print(args)
     random.seed(args.seed)
+
+    # 启动后台线程监控 GPU 显存使用情况
+    monitor_thread = threading.Thread(target=monitor_gpu,args=(args.gpu_id,))
+    monitor_thread.daemon = True
+    monitor_thread.start()
 
     if args.backend == "vllm":
         elapsed_time = run_vllm(
@@ -252,6 +209,11 @@ def main(args: argparse.Namespace):
     print(f"Throughput: {args.num_prompts / elapsed_time:.2f} requests/s, "
           f"{total_num_tokens / elapsed_time:.2f} tokens/s")
 
+
+    with max_used_lock:
+        for index, (used, total) in max_used.items():
+            print(f"GPU {index}: {used} MB / {total} MB")
+
     # Output JSON results if specified
     if args.output_json:
         results = {
@@ -261,6 +223,9 @@ def main(args: argparse.Namespace):
             "requests_per_second": args.num_prompts / elapsed_time,
             "tokens_per_second": total_num_tokens / elapsed_time,
         }
+        with max_used_lock:
+            for index, (used, total) in max_used.items():
+                results[f'GPU {index}']=used
         with open(args.output_json, "w") as f:
             json.dump(results, f, indent=4)
 
@@ -297,6 +262,7 @@ if __name__ == "__main__":
                         help="Number of generated sequences per prompt.")
     parser.add_argument("--use-beam-search", action="store_true")
     parser.add_argument("--loop", type=int, default=10)
+    parser.add_argument("--gpu_id", type=str, default="0,1",help="gpu id")
     parser.add_argument("--num-prompts",
                         type=int,
                         default=1000,
@@ -441,4 +407,5 @@ if __name__ == "__main__":
         if args.tokenizer != args.model:
             raise ValueError("Tokenizer must be the same as the model for MII "
                              "backend.")
+
     main(args)
