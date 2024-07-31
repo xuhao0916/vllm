@@ -221,7 +221,7 @@ def main(args: argparse.Namespace):
             "num_requests": args.num_prompts,
             "total_num_tokens": total_num_tokens,
             "requests_per_second": args.num_prompts / elapsed_time,
-            "tokens_per_second": total_num_tokens / elapsed_time,
+            "tokens_per_second": round(total_num_tokens / elapsed_time, 2),
         }
         with max_used_lock:
             for index, (used, total) in max_used.items():

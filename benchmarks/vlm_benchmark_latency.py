@@ -102,12 +102,18 @@ def main(args: argparse.Namespace):
             print(p.key_averages())
         else:
             start_time = time.perf_counter()
-            llm.generate(dummy_inputs,
+            output = llm.generate(dummy_inputs,
                          sampling_params=sampling_params,
                          use_tqdm=False)
             end_time = time.perf_counter()
             latency = end_time - start_time
-            return latency
+
+            # 获取metrics
+            metrics = output[0].metrics
+            # 计算第一个token的延迟
+            first_token_latency = metrics.first_token_time - metrics.arrival_time
+            print(f"First token latency: {first_token_latency} seconds")
+            return [latency, first_token_latency]
 
     print("Warming up...")
     for _ in tqdm(range(args.num_iters_warmup), desc="Warmup iterations"):
@@ -125,25 +131,24 @@ def main(args: argparse.Namespace):
 
     # Benchmark.
     latencies = []
+    ftl = []
     for _ in tqdm(range(args.num_iters), desc="Profiling iterations"):
-        latencies.append(run_to_completion(profile_dir=None))
+        latencies.append(run_to_completion(profile_dir=None)[0])
+        ftl.append(run_to_completion(profile_dir=None)[1])
     latencies = np.array(latencies)
-    percentages = [10, 50, 90, 99]
-    percentiles = np.percentile(latencies, percentages)
-    print(f'Avg latency: {np.mean(latencies)} seconds')
-    print(f'Min latency: {np.amin(latencies)} seconds')
-    print(f'Max latency: {np.amax(latencies)} seconds')
-    for percentage, percentile in zip(percentages, percentiles):
-        print(f'{percentage}% percentile latency: {percentile} seconds')
+    ftl = np.array(ftl)
+    print(f'Avg request latency: {round(np.mean(latencies),2)} seconds')
+    print(f'Avg FTL: {round(np.amin(ftl),2)} seconds')
+    print(f'Min latency: {round(np.amin(ftl),2)} seconds')
+    print(f'Max latency: {round(np.amax(ftl),2)} seconds')
 
     # Output JSON results if specified
     if args.output_json:
         results = {
-            "avg_latency": np.mean(latencies),
-            "min_latency": np.amin(latencies),
-            "max_latency": np.amax(latencies),
-            # "latencies": latencies.tolist(),
-            # "percentiles": dict(zip(percentages, percentiles.tolist())),
+            "request avg_latency": round(np.mean(latencies),2),
+            "avg_ftl": round(np.amin(ftl),2),
+            "min_ftl": round(np.amin(ftl),2),
+            "max_ftl": round(np.amax(ftl),2),
         }
         with open(args.output_json, "w") as f:
             json.dump(results, f, indent=4)
