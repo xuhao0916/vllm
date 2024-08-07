@@ -1,6 +1,6 @@
 """Minimal implementation of CLIPVisionModel intended to be only used 
 within a vision language model."""
-from typing import Optional
+from typing import Iterable, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -14,6 +14,7 @@ from vllm.model_executor.layers.activation import get_act_fn
 from vllm.model_executor.layers.linear import (ColumnParallelLinear,
                                                RowParallelLinear)
 from vllm.model_executor.layers.quantization import QuantizationConfig
+from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.multimodal.image import (cached_get_tokenizer,
                                    repeat_and_pad_image_tokens)
 from vllm.sequence import SequenceData
@@ -32,7 +33,7 @@ def get_clip_num_patches(*, image_size: int, patch_size: int) -> int:
 
 def get_clip_image_feature_size(hf_config: CLIPVisionConfig) -> int:
     return get_clip_num_patches(image_size=hf_config.image_size,
-                                patch_size=hf_config.patch_size)
+                                patch_size=hf_config.patch_size) + 1
 
 
 def get_max_clip_image_tokens(hf_config: CLIPVisionConfig) -> int:
@@ -214,22 +215,24 @@ class CLIPEncoder(nn.Module):
 
     def __init__(self,
                  config: CLIPVisionConfig,
-                 quant_config: Optional[QuantizationConfig] = None):
+                 quant_config: Optional[QuantizationConfig] = None,
+                 num_hidden_layers_override: Optional[int] = None):
         super().__init__()
         self.config = config
+
+        if num_hidden_layers_override is None:
+            num_hidden_layers = config.num_hidden_layers
+        else:
+            num_hidden_layers = num_hidden_layers_override
         self.layers = nn.ModuleList([
             CLIPEncoderLayer(config=config, quant_config=quant_config)
-            for _ in range(config.num_hidden_layers)
+            for _ in range(num_hidden_layers)
         ])
 
-    def forward(self,
-                inputs_embeds: torch.Tensor,
-                vision_feature_layer: int = -1):
+    def forward(self, inputs_embeds: torch.Tensor):
 
-        # Encoder forward pass only up to the required layer
-        num_layer = len(self.layers) + vision_feature_layer + 1
         hidden_states = inputs_embeds
-        for encoder_layer in self.layers[:num_layer]:
+        for encoder_layer in self.layers:
             hidden_states = encoder_layer(hidden_states)
 
         return hidden_states
@@ -239,7 +242,8 @@ class CLIPVisionTransformer(nn.Module):
 
     def __init__(self,
                  config: CLIPVisionConfig,
-                 quant_config: Optional[QuantizationConfig] = None):
+                 quant_config: Optional[QuantizationConfig] = None,
+                 num_hidden_layers_override: Optional[int] = None):
         super().__init__()
         self.config = config
         embed_dim = config.hidden_size
@@ -249,18 +253,19 @@ class CLIPVisionTransformer(nn.Module):
         # NOTE: This typo of "layrnorm" is not fixed on purpose to match
         # the original transformers code and name of the model weights.
         self.pre_layrnorm = nn.LayerNorm(embed_dim, eps=config.layer_norm_eps)
-        self.encoder = CLIPEncoder(config=config, quant_config=quant_config)
+        self.encoder = CLIPEncoder(
+            config=config,
+            quant_config=quant_config,
+            num_hidden_layers_override=num_hidden_layers_override)
 
     def forward(
         self,
         pixel_values: torch.Tensor,
-        vision_feature_layer: int = -1,
     ) -> torch.Tensor:
 
         hidden_states = self.embeddings(pixel_values)
         hidden_states = self.pre_layrnorm(hidden_states)
-        hidden_states = self.encoder(inputs_embeds=hidden_states,
-                                     vision_feature_layer=vision_feature_layer)
+        hidden_states = self.encoder(inputs_embeds=hidden_states)
 
         return hidden_states
 
@@ -272,18 +277,37 @@ class CLIPVisionModel(nn.Module):
 
     def __init__(self,
                  config: CLIPVisionConfig,
-                 quant_config: Optional[QuantizationConfig] = None):
+                 quant_config: Optional[QuantizationConfig] = None,
+                 num_hidden_layers_override: Optional[int] = None):
         super().__init__()
-        self.vision_model = CLIPVisionTransformer(config=config,
-                                                  quant_config=quant_config)
+        self.vision_model = CLIPVisionTransformer(
+            config=config,
+            quant_config=quant_config,
+            num_hidden_layers_override=num_hidden_layers_override)
 
-    def forward(self,
-                pixel_values: Optional[torch.Tensor] = None,
-                vision_feature_layer: int = -1):
+    def forward(self, pixel_values: Optional[torch.Tensor] = None):
 
-        return self.vision_model(pixel_values=pixel_values,
-                                 vision_feature_layer=vision_feature_layer)
+        return self.vision_model(pixel_values=pixel_values)
 
     @property
     def device(self):
         return next(self.parameters()).device
+
+    def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
+        params_dict = dict(self.named_parameters())
+        layer_count = len(self.vision_model.encoder.layers)
+
+        for name, loaded_weight in weights:
+            # post_layernorm is not needed in CLIPVisionModel
+            if "vision_model.post_layernorm" in name:
+                continue
+            # omit layers when num_hidden_layers_override is set
+            if "vision_model.encoder.layers." in name:
+                layer_idx = int(name.split(".")[3])
+                if layer_idx >= layer_count:
+                    continue
+
+            param = params_dict[name]
+            weight_loader = getattr(param, "weight_loader",
+                                    default_weight_loader)
+            weight_loader(param, loaded_weight)
