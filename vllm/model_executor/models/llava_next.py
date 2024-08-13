@@ -207,6 +207,14 @@ def input_processor_for_llava_next(ctx: InputContext, llm_inputs: LLMInputs):
             input_height=height,
             input_width=width,
         )
+    elif isinstance(image_data, list):
+            width, height = image_data[0].size
+
+            image_feature_size = get_llava_next_image_feature_size(
+                hf_config,
+                input_height=height,
+                input_width=width,
+        )
     elif isinstance(image_data, torch.Tensor):
         raise NotImplementedError("Embeddings input is not supported yet")
     else:
@@ -440,6 +448,7 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsVision):
         assert self.vision_tower is not None
 
         pixel_values = inputs["data"]
+        logger.info(f'pixel_values: {pixel_values.shape}')
 
         if isinstance(pixel_values, torch.Tensor):
             b, num_patches, c, h, w = pixel_values.shape
@@ -540,6 +549,7 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsVision):
 
         if image_input is not None:
             vision_embeddings = self._process_image_input(image_input)
+            logger.info(f'vision_embeddings shape {vision_embeddings.shape}')
             inputs_embeds = self.language_model.model.get_input_embeddings(
                 input_ids)
 

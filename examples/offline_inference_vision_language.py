@@ -12,135 +12,74 @@ from vllm.assets.image import ImageAsset
 from vllm.utils import FlexibleArgumentParser
 
 # Input image and question
-image = ImageAsset("cherry_blossom").pil_image.convert("RGB")
-question = "What is the content of this image?"
-
-
-# LLaVA-1.5
-def run_llava(question):
-
-    prompt = f"USER: <image>\n{question}\nASSISTANT:"
-
-    llm = LLM(model="llava-hf/llava-1.5-7b-hf")
-
-    return llm, prompt
-
+cherry_blossom_image = ImageAsset("cherry_blossom").pil_image.convert("RGB")
+stop_sign_image = ImageAsset("stop_sign").pil_image.convert("RGB")
 
 # LLaVA-1.6/LLaVA-NeXT
-def run_llava_next(question):
+def run_llava_next():
 
-    prompt = f"[INST] <image>\n{question} [/INST]"
-    llm = LLM(model="llava-hf/llava-v1.6-mistral-7b-hf")
-
-    return llm, prompt
-
-
-# Fuyu
-def run_fuyu(question):
-
-    prompt = f"{question}\n"
-    llm = LLM(model="adept/fuyu-8b")
-
-    return llm, prompt
-
-
-# Phi-3-Vision
-def run_phi3v(question):
-
-    prompt = f"<|user|>\n<|image_1|>\n{question}<|end|>\n<|assistant|>\n"  # noqa: E501
-    # Note: The default setting of max_num_seqs (256) and
-    # max_model_len (128k) for this model may cause OOM.
-    # You may lower either to run this example on lower-end GPUs.
-
-    # In this example, we override max_num_seqs to 5 while
-    # keeping the original context length of 128k.
-    llm = LLM(
-        model="microsoft/Phi-3-vision-128k-instruct",
-        trust_remote_code=True,
-        max_num_seqs=5,
-    )
-    return llm, prompt
+    llm = LLM(model="/models/llava-v1.6-mistral-7b-hf",tensor_parallel_size=2)
+    inputs = [
+            # {
+            #     "prompt": f"[INST] What is the content of this image? [/INST]",
+            # },
+            # {
+            #     "prompt": f"[INST] <image>\nWhat is the content of this image? [/INST]",
+            #     "multi_modal_data": {
+            #         "image": cherry_blossom_image
+            #     }
+            # },
+            # {
+            #     "prompt": f"[INST] <image>\nWhat is the content of this image? [/INST]",
+            #     "multi_modal_data": {
+            #         "image": stop_sign_image
+            #     }
+            # },
+            {
+                "prompt": f"[INST] <image> \n <image> \n请用中文描述这两幅图片的内容。[/INST]",
+                "multi_modal_data": {
+                    "image": [cherry_blossom_image, stop_sign_image]
+                }
+            },
+        ]
+    return llm, inputs
 
 
-# PaliGemma
-def run_paligemma(question):
 
-    # PaliGemma has special prompt format for VQA
-    prompt = "caption en"
-    llm = LLM(model="google/paligemma-3b-mix-224")
+def run_GlintCom_03():
+    # system="<|im_start|>system\nYou are a helpful assistant."
+    llm = LLM(model="/models/llava-7b-unicom-qwen2-mul-hd-cappre-1m",tensor_parallel_size=2)
 
-    return llm, prompt
-
-
-# Chameleon
-def run_chameleon(question):
-
-    prompt = f"{question}<image>"
-    llm = LLM(model="facebook/chameleon-7b")
-    return llm, prompt
-
-
-# MiniCPM-V
-def run_minicpmv(question):
-
-    # 2.0
-    # The official repo doesn't work yet, so we need to use a fork for now
-    # For more details, please see: See: https://github.com/vllm-project/vllm/pull/4087#issuecomment-2250397630 # noqa
-    # model_name = "HwwwH/MiniCPM-V-2"
-
-    # 2.5
-    model_name = "openbmb/MiniCPM-Llama3-V-2_5"
-    tokenizer = AutoTokenizer.from_pretrained(model_name,
-                                              trust_remote_code=True)
-    llm = LLM(
-        model=model_name,
-        trust_remote_code=True,
-    )
-
-    messages = [{
-        'role': 'user',
-        'content': f'(<image>./</image>)\n{question}'
-    }]
-    prompt = tokenizer.apply_chat_template(messages,
-                                           tokenize=False,
-                                           add_generation_prompt=True)
-    return llm, prompt
-
-
-# InternVL
-def run_internvl(question):
-    # Generally, InternVL can use chatml template for conversation
-    TEMPLATE = "<|im_start|>User\n{prompt}<|im_end|>\n<|im_start|>Assistant\n"
-    prompt = f"<image>\n{question}\n"
-    prompt = TEMPLATE.format(prompt=prompt)
-    llm = LLM(
-        model="OpenGVLab/InternVL2-4B",
-        trust_remote_code=True,
-        max_num_seqs=5,
-    )
-    return llm, prompt
-
-
-# BLIP-2
-def run_blip2(question):
-
-    # BLIP-2 prompt format is inaccurate on HuggingFace model repository.
-    # See https://huggingface.co/Salesforce/blip2-opt-2.7b/discussions/15#64ff02f3f8cf9e4f5b038262 #noqa
-    prompt = f"Question: {question} Answer:"
-    llm = LLM(model="Salesforce/blip2-opt-2.7b")
-    return llm, prompt
+    inputs = [
+    # {
+    #     "prompt": f"USER: What is the content of this image?\nASSISTANT:",
+    # },
+    # {
+    #     "prompt": f"USER: <image>\nWhat is the content of this image?\nASSISTANT:",
+    #     "multi_modal_data": {
+    #         "image": cherry_blossom_image
+    #     }
+    # },
+    {
+        "prompt": f"<|im_start|>user: <image>\n请用中文描述这图片的内容。<|im_end|>\n<|im_start|>assistant\n",
+        "multi_modal_data": {
+            "image": stop_sign_image
+        }
+    },
+    {
+        "prompt": f"<|im_start|>user: <image> \n <image> \n请用中文描述这两幅图片的内容。<|im_end|>\n<|im_start|>assistant\n",
+        "multi_modal_data": {
+            "image": [stop_sign_image, cherry_blossom_image]
+            # "image": [cherry_blossom_image, stop_sign_image]
+        }
+    },
+    ]
+    return llm, inputs
 
 
 model_example_map = {
-    "llava": run_llava,
     "llava-next": run_llava_next,
-    "fuyu": run_fuyu,
-    "phi3_v": run_phi3v,
-    "paligemma": run_paligemma,
-    "chameleon": run_chameleon,
-    "minicpmv": run_minicpmv,
-    "blip-2": run_blip2,
-    "internvl_chat": run_internvl,
+    "glintcom-03": run_GlintCom_03,
 }
 
 
@@ -149,37 +88,17 @@ def main(args):
     if model not in model_example_map:
         raise ValueError(f"Model type {model} is not supported.")
 
-    llm, prompt = model_example_map[model](question)
+    llm, inputs = model_example_map[model]()
 
     # We set temperature to 0.2 so that outputs can be different
     # even when all prompts are identical when running batch inference.
-    sampling_params = SamplingParams(temperature=0.2, max_tokens=64)
-
-    assert args.num_prompts > 0
-    if args.num_prompts == 1:
-        # Single inference
-        inputs = {
-            "prompt": prompt,
-            "multi_modal_data": {
-                "image": image
-            },
-        }
-
-    else:
-        # Batch inference
-        inputs = [{
-            "prompt": prompt,
-            "multi_modal_data": {
-                "image": image
-            },
-        } for _ in range(args.num_prompts)]
+    sampling_params = SamplingParams(max_tokens=2048,top_p=0.95,temperature=0)
 
     outputs = llm.generate(inputs, sampling_params=sampling_params)
 
-    for o in outputs:
+    for i, o in zip(inputs, outputs):
         generated_text = o.outputs[0].text
-        print(generated_text)
-
+        print(i["prompt"], generated_text)
 
 if __name__ == "__main__":
     parser = FlexibleArgumentParser(
