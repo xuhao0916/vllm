@@ -303,24 +303,16 @@ def input_processor(ctx: InputContext, llm_inputs: LLMInputs):
             input_height=height,
             input_width=width,
         )
-        logger.info(f'image_feature_size: {image_feature_size}')
+        # logger.info(f'image_feature_size: {image_feature_size}')
     #multi image
     elif isinstance(image_data, list):
-        # image_feature_size = 0
-        # for each_image in image_data:
-        #     width, height = each_image.size
-        #     image_feature_size += get_image_feature_size(
-        #         hf_config,
-        #         input_height=height,
-        #         input_width=width,
-        #     )
         width, height = image_data[0].size
         image_feature_size = get_image_feature_size(
             hf_config,
             input_height=height,
             input_width=width,
         )
-        logger.info(f'image_feature_size: {image_feature_size} image_size: {len(image_data)}')
+        # logger.info(f'avg image_feature_size: {image_feature_size} image_size: {len(image_data)}')
     elif isinstance(image_data, torch.Tensor):
         raise NotImplementedError("Embeddings input is not supported yet")
     else:
