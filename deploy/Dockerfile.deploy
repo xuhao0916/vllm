@@ -16,6 +16,8 @@ ENV OAIP_COMMITID=$OAIP_COMMITID
 
 WORKDIR /vllm
 
+RUN rm -r oaip .git .github .gitmodules ~/.bash_history
+
 COPY . .
 RUN bash /vllm/thirdparty/install.sh && rm -rf /vllm/thirdparty
 

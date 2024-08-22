@@ -71,16 +71,17 @@ def repeat_and_pad_image_tokens(
                 "Please follow the prompt format that is "
                 "documented on HuggingFace which does not involve "
                 "repeating %s tokens.", image_token_str)
-        elif image_token_count > 1:
-            logger.warning("Multiple image input is not supported yet, "
-                           "so any extra image tokens will be treated "
-                           "as plain text.")
+        # elif image_token_count > 1:
+        #     logger.warning("Multiple image input is not supported yet, "
+        #                    "so any extra image tokens will be treated "
+        #                    "as plain text.")
 
         # The image tokens are removed to be consistent with HuggingFace
-        new_prompt = prompt.replace(image_token_str, replacement_str, 1)
+        # new_prompt = prompt.replace(image_token_str, replacement_str, 1)
+        new_prompt = prompt.replace(image_token_str, replacement_str)
 
     new_token_ids: List[int] = []
-    for i, token in enumerate(prompt_token_ids):
+    for token in prompt_token_ids:
         if token == image_token_id:
             replacement_ids = repeat_and_pad_token(
                 image_token_id,
@@ -90,9 +91,9 @@ def repeat_and_pad_image_tokens(
             )
             new_token_ids.extend(replacement_ids)
 
-            # No need to further scan the list since we only replace once
-            new_token_ids.extend(prompt_token_ids[i + 1:])
-            break
+            # # No need to further scan the list since we only replace once
+            # new_token_ids.extend(prompt_token_ids[i + 1:])
+            # break
         else:
             new_token_ids.append(token)
 
@@ -100,6 +101,7 @@ def repeat_and_pad_image_tokens(
 
 
 class ImagePlugin(MultiModalPlugin):
+    """Plugin for image data."""
 
     def get_data_key(self) -> str:
         return "image"
@@ -112,7 +114,7 @@ class ImagePlugin(MultiModalPlugin):
     def _default_input_mapper(self, ctx: InputContext,
                               data: object) -> MultiModalInputs:
         model_config = ctx.model_config
-        if isinstance(data, Image.Image):
+        if isinstance(data, (Image.Image, list)):
             image_processor = self._get_hf_image_processor(model_config)
             if image_processor is None:
                 raise RuntimeError("No HuggingFace processor is available "

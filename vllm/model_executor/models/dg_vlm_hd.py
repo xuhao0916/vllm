@@ -1,5 +1,5 @@
 from typing import Dict, Iterable, List, Literal, Optional, Tuple, TypedDict, Union
-
+import itertools
 import torch
 import torch.nn as nn
 from PIL import Image
@@ -30,7 +30,9 @@ from vllm.sequence import IntermediateTensors, SamplerOutput
 from vllm.logger import init_logger
 
 from vllm.model_executor.models.unicom_encode import UnicomVisionTower
+from vllm.model_executor.models.clip_encode import CLIPVisionTower
 from vllm.model_executor.models.qwen2 import Qwen2DecoderLayer
+
 from vllm.model_executor.layers.layernorm import RMSNorm
 
 from .clip import (dummy_image_for_clip, dummy_seq_data_for_clip,
@@ -38,13 +40,16 @@ from .clip import (dummy_image_for_clip, dummy_seq_data_for_clip,
 
 from .interfaces import SupportsVision
 from .llava import LlavaMultiModalProjector
-from .utils import merge_vision_embeddings
+from .utils import (filter_weights, merge_vision_embeddings)
 
 logger = init_logger(__name__)
 
 _KEYS_TO_MODIFY_MAPPING = {
     "model.mm_projector.0": "multi_modal_projector.linear_1",
     "model.mm_projector.2": "multi_modal_projector.linear_2",
+}
+
+_START_KEYS_TO_MODIFY_MAPPING = {
     "model.vision_tower": "vision_tower",
     "model.": "language_model."
 }
@@ -151,6 +156,70 @@ class LlavaQwen2Model(nn.Module):
         hidden_states, _ = self.norm(hidden_states, residual)
         return hidden_states
 
+    def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
+        stacked_params_mapping = [
+            # (param_name, shard_name, shard_id)
+            ("qkv_proj", "q_proj", "q"),
+            ("qkv_proj", "k_proj", "k"),
+            ("qkv_proj", "v_proj", "v"),
+            ("gate_up_proj", "gate_proj", 0),
+            ("gate_up_proj", "up_proj", 1),
+        ]
+        params_dict = dict(self.named_parameters(remove_duplicate=False))
+        # for k,_ in params_dict.items(): 
+        #     logger.info(f'{k}')
+
+        for name, loaded_weight in weights:
+            if "rotary_emb.inv_freq" in name:
+                continue
+            if "patch_embedding" in name:
+                continue
+            for key_to_modify, new_key in _KEYS_TO_MODIFY_MAPPING.items():
+                if key_to_modify in name:
+                    # logger.info(f'orignal name {name}')
+                    name = name.replace(key_to_modify, new_key)
+                    logger.info(f'replaced name {name}, {key_to_modify}->{new_key}')
+
+            for key_to_modify, new_key in _START_KEYS_TO_MODIFY_MAPPING.items():
+                if name.startswith(key_to_modify):
+                    # logger.info(f'orignal name {name}')
+                    name = name.replace(key_to_modify, new_key)
+                    logger.info(f'replaced name {name}, {key_to_modify}->{new_key}')
+
+            if self.config.tie_word_embeddings and "lm_head.weight" in name:
+                continue
+            for (param_name, weight_name, shard_id) in stacked_params_mapping:
+                if weight_name not in name:
+                    continue
+                name = name.replace(weight_name, param_name)
+                # Skip loading extra bias for GPTQ models.
+                if name.endswith(".bias") and name not in params_dict:
+                    continue
+                param = params_dict[name]
+                weight_loader = param.weight_loader
+                weight_loader(param, loaded_weight, shard_id)
+                break
+            else:
+                # Skip loading extra bias for GPTQ models.
+                if name.endswith(".bias") and name not in params_dict:
+                    continue
+                logger.info(f'load {name}')
+                param = params_dict[name]
+                # print(f'dict name {name} {loaded_weight.size()}')
+
+                weight_loader = getattr(param, "weight_loader",
+                                        default_weight_loader)
+                weight_loader(param, loaded_weight)
+
+
+def get_base_feature_size(hf_config:LlavaNextConfig) -> int:
+    vision_config = hf_config.vision_config
+    num_patches = get_clip_patch_grid_length(
+        image_size=vision_config.image_size,
+        patch_size=vision_config.patch_size,
+    )
+    return num_patches * num_patches
+
 def get_image_feature_size(
     hf_config: LlavaNextConfig,
     *,
@@ -225,6 +294,7 @@ def input_processor(ctx: InputContext, llm_inputs: LLMInputs):
     # logger.info(f'vision config {vision_config}')
 
     image_data = multi_modal_data["image"]
+    #sole image, patch with reszie 
     if isinstance(image_data, Image.Image):
         width, height = image_data.size
 
@@ -234,6 +304,15 @@ def input_processor(ctx: InputContext, llm_inputs: LLMInputs):
             input_width=width,
         )
         # logger.info(f'image_feature_size: {image_feature_size}')
+    #multi image
+    elif isinstance(image_data, list):
+        width, height = image_data[0].size
+        image_feature_size = get_image_feature_size(
+            hf_config,
+            input_height=height,
+            input_width=width,
+        )
+        # logger.info(f'avg image_feature_size: {image_feature_size} image_size: {len(image_data)}')
     elif isinstance(image_data, torch.Tensor):
         raise NotImplementedError("Embeddings input is not supported yet")
     else:
@@ -276,7 +355,10 @@ class LlavaNextQwen2ForConditionalGeneration(nn.Module, SupportsVision):
         else:
             vision_tower = config._name_or_path + '/' + vision_tower
 
-        self.vision_tower = UnicomVisionTower(vision_tower, config)
+        if vision_tower.endswith("-v2"):
+            self.vision_tower = UnicomVisionTower(vision_tower, config)
+        else:
+            self.vision_tower = CLIPVisionTower(vision_tower, config)
         logger.info(f'vision_tower {vision_tower}')
 
         self.multi_modal_projector = LlavaMultiModalProjector(
@@ -377,7 +459,8 @@ class LlavaNextQwen2ForConditionalGeneration(nn.Module, SupportsVision):
 
     def _merge_image_patch_embeddings(self, image_size: torch.Tensor,
                                       patch_embeddings: torch.Tensor, *,
-                                      strategy: str) -> torch.Tensor:
+                                      strategy: str,
+                                      mutil_img:bool = True) -> torch.Tensor:
         # Based on: https://github.com/haotian-liu/LLaVA/blob/main/llava/model/llava_arch.py
         if strategy == "flat":
             return patch_embeddings.flatten(0, 1)
@@ -485,11 +568,13 @@ class LlavaNextQwen2ForConditionalGeneration(nn.Module, SupportsVision):
                                            for _ in range(batch_size)])
 
         patch_strategy = self.config.mm_patch_merge_type
-        logger.info(f'mm_patch_merge_type {patch_strategy}')
+        multi_img = False
+        if hasattr(self.config, 'multi_img'): multi_img = self.config.multi_img
+        logger.info(f'mm_patch_merge_type {patch_strategy}, multi_img {multi_img}')
         merged_patch_embeddings = [
             self._merge_image_patch_embeddings(image_sizes[i],
                                                patch_features_batch,
-                                               strategy=patch_strategy)
+                                               strategy=patch_strategy, mutil_img=multi_img)
             for i, patch_features_batch in enumerate(patch_embeddings)
         ]
 
@@ -552,6 +637,7 @@ class LlavaNextQwen2ForConditionalGeneration(nn.Module, SupportsVision):
 
         if image_input is not None:
             vision_embeddings = self._process_image_input(image_input)
+            logger.info(f'vision_embeddings shape {vision_embeddings.shape}')
             inputs_embeds = self.language_model.get_input_embeddings(input_ids)
 
             inputs_embeds = merge_vision_embeddings(
@@ -595,19 +681,32 @@ class LlavaNextQwen2ForConditionalGeneration(nn.Module, SupportsVision):
             ("gate_up_proj", "up_proj", 1),
         ]
         params_dict = dict(self.named_parameters(remove_duplicate=False))
+        # for k,_ in params_dict.items(): 
+        #     logger.info(f'{k}')
 
         for name, loaded_weight in weights:
             if "rotary_emb.inv_freq" in name:
                 continue
+            if "patch_embedding" in name:
+                continue
             for key_to_modify, new_key in _KEYS_TO_MODIFY_MAPPING.items():
                 if key_to_modify in name:
+                    # logger.info(f'orignal name {name}')
                     name = name.replace(key_to_modify, new_key)
+                    # logger.info(f'replaced name {name}, {key_to_modify}->{new_key}')
+
+            for key_to_modify, new_key in _START_KEYS_TO_MODIFY_MAPPING.items():
+                if name.startswith(key_to_modify):
+                    # logger.info(f'orignal name {name}')
+                    name = name.replace(key_to_modify, new_key)
+                    # logger.info(f'replaced name {name}, {key_to_modify}->{new_key}')
 
             if self.config.tie_word_embeddings and "lm_head.weight" in name:
                 continue
             for (param_name, weight_name, shard_id) in stacked_params_mapping:
-                if weight_name not in name:
+                if weight_name not in name or name.startswith("vision_tower"):
                     continue
+
                 name = name.replace(weight_name, param_name)
                 # Skip loading extra bias for GPTQ models.
                 if name.endswith(".bias") and name not in params_dict:
@@ -620,6 +719,7 @@ class LlavaNextQwen2ForConditionalGeneration(nn.Module, SupportsVision):
                 # Skip loading extra bias for GPTQ models.
                 if name.endswith(".bias") and name not in params_dict:
                     continue
+                # logger.info(f'load {name}')
                 param = params_dict[name]
                 # print(f'dict name {name} {loaded_weight.size()}')
 

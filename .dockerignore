@@ -1,1 +1,6 @@
+.git/
+.gitignore
+.gitmodules
+.github/
+.vscode/
 vllm/*.so
