@@ -39,7 +39,7 @@ def _get_lora_device(base_layer: nn.Module) -> torch.device:
     # unquantizedLinear
     if hasattr(base_layer, "weight"):
         return base_layer.weight.device
-    # GPTQ/AWQ/SqueezeLLM
+    # GPTQ/AWQ
     elif hasattr(base_layer, "qweight"):
         return base_layer.qweight.device
     # marlin
@@ -1066,6 +1066,10 @@ class LogitsProcessorWithLoRA(BaseLayerWithLoRA):
     @property
     def include_gpu_probs_tensor(self):
         return self.base_layer.include_gpu_probs_tensor
+
+    @property
+    def should_modify_greedy_probs_inplace(self):
+        return self.base_layer.should_modify_greedy_probs_inplace
 
     def create_lora_weights(
         self,

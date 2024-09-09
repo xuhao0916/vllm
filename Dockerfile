@@ -5,56 +5,33 @@
 # docs/source/dev/dockerfile/dockerfile.rst and
 # docs/source/assets/dev/dockerfile-stages-dependency.png
 
-ARG CUDA_VERSION=12.3.1
+ARG CUDA_VERSION=12.4.1
 #################### BASE BUILD IMAGE ####################
 # prepare basic build environment
-<<<<<<< HEAD
-FROM mirror.ccs.tencentyun.com/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS base
-# FROM dockerhub.deepglint.com/lse/triton_trt_llm AS base
-
-ARG CUDA_VERSION=12.3.1
-ARG PYTHON_VERSION=3
-ARG proxy_val=""
-
-ENV DEBIAN_FRONTEND=noninteractive
-ENV http_proxy=$proxy_val
-ENV https_proxy=$proxy_val
-
-# RUN echo 'tzdata tzdata/Areas select America' | debconf-set-selections \
-#     && echo 'tzdata tzdata/Zones/America select Los_Angeles' | debconf-set-selections \
-#     && apt-get update -y \
-#     && apt-get install -y ccache software-properties-common \
-#     && add-apt-repository ppa:deadsnakes/ppa \
-#     && apt-get update -y \
-#     && apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv python3-pip \
-#     && if [ "${PYTHON_VERSION}" != "3" ]; then update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1; fi \
-#     && python3 --version \
-#     && python3 -m pip --version
-=======
-FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu20.04 AS base
+FROM mirror.ccs.tencentyun.com/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu20.04 AS base
+# FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu20.04 AS base
 
 ARG CUDA_VERSION=12.4.1
 ARG PYTHON_VERSION=3.10
-
 ENV DEBIAN_FRONTEND=noninteractive
+ARG proxy_val=""
+ENV http_proxy=$proxy_val
+ENV https_proxy=$proxy_val
 
-RUN echo 'tzdata tzdata/Areas select America' | debconf-set-selections \
-    && echo 'tzdata tzdata/Zones/America select Los_Angeles' | debconf-set-selections \
+# RUN sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
+# Install Python and other dependencies
+RUN echo 'tzdata tzdata/Areas select Asia' | debconf-set-selections \
+    && echo 'tzdata tzdata/Zones/Asia select Shanghai' | debconf-set-selections \
     && apt-get update -y \
-    && apt-get install -y ccache software-properties-common \
+    && apt-get install -y ccache software-properties-common git curl sudo \
     && add-apt-repository ppa:deadsnakes/ppa \
     && apt-get update -y \
     && apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv \
-    && if [ "${PYTHON_VERSION}" != "3" ]; then update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1; fi \
-    && python3 --version
->>>>>>> upstream/main
-
-RUN apt-get update -y \
-    && apt-get install -y git curl sudo
-
-# Install pip s.t. it will be compatible with our PYTHON_VERSION
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION}
-RUN python3 -m pip --version
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
+    && update-alternatives --set python3 /usr/bin/python${PYTHON_VERSION} \
+    && ln -sf /usr/bin/python${PYTHON_VERSION}-config /usr/bin/python3-config \
+    && curl -sS https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION} \
+    && python3 --version && python3 -m pip --version
 
 RUN pip config set global.index-url https://mirrors.cloud.tencent.com/pypi/simple
 RUN pip config set install.trusted-host mirrors.cloud.tencent.com
@@ -74,9 +51,6 @@ COPY requirements-cuda.txt requirements-cuda.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m pip install -r requirements-cuda.txt
 
-COPY requirements-mamba.txt requirements-mamba.txt
-RUN python3 -m pip install packaging
-RUN python3 -m pip install -r requirements-mamba.txt
 
 # cuda arch list used by torch
 # can be useful for both `dev` and `test`
@@ -89,16 +63,11 @@ ENV TORCH_CUDA_ARCH_LIST=${torch_cuda_arch_list}
 #################### WHEEL BUILD IMAGE ####################
 FROM base AS build
 
-ARG PYTHON_VERSION=3.10
-
 # install build dependencies
 COPY requirements-build.txt requirements-build.txt
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m pip install -r requirements-build.txt
-
-# install compiler cache to speed up compilation leveraging local or remote caching
-RUN apt-get update -y && apt-get install -y ccache
 
 # files and directories related to build wheels
 COPY csrc csrc
@@ -122,6 +91,8 @@ ARG buildkite_commit
 ENV BUILDKITE_COMMIT=${buildkite_commit}
 
 ARG USE_SCCACHE
+ARG SCCACHE_BUCKET_NAME=vllm-build-sccache
+ARG SCCACHE_REGION_NAME=us-west-2
 # if USE_SCCACHE is set, use sccache to speed up compilation
 RUN --mount=type=cache,target=/root/.cache/pip \
     if [ "$USE_SCCACHE" = "1" ]; then \
@@ -130,12 +101,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         && tar -xzf sccache.tar.gz \
         && sudo mv sccache-v0.8.1-x86_64-unknown-linux-musl/sccache /usr/bin/sccache \
         && rm -rf sccache.tar.gz sccache-v0.8.1-x86_64-unknown-linux-musl \
-        && if [ "$CUDA_VERSION" = "11.8.0" ]; then \
-            export SCCACHE_BUCKET=vllm-build-sccache-2; \
-           else \
-            export SCCACHE_BUCKET=vllm-build-sccache; \
-           fi \
-        && export SCCACHE_REGION=us-west-2 \
+        && export SCCACHE_BUCKET=${SCCACHE_BUCKET_NAME} \
+        && export SCCACHE_REGION=${SCCACHE_REGION_NAME} \
+        && export SCCACHE_IDLE_TIMEOUT=0 \
         && export CMAKE_BUILD_TYPE=Release \
         && sccache --show-stats \
         && python3 setup.py bdist_wheel --dist-dir=dist --py-limited-api=cp38 \
@@ -149,10 +117,17 @@ RUN --mount=type=cache,target=/root/.cache/ccache \
         python3 setup.py bdist_wheel --dist-dir=dist --py-limited-api=cp38; \
     fi
 
-# check the size of the wheel, we cannot upload wheels larger than 100MB
+# Check the size of the wheel if RUN_WHEEL_CHECK is true
 COPY .buildkite/check-wheel-size.py check-wheel-size.py
-RUN python3 check-wheel-size.py dist
-
+# Default max size of the wheel is 250MB
+ARG VLLM_MAX_SIZE_MB=300
+ENV VLLM_MAX_SIZE_MB=$VLLM_MAX_SIZE_MB
+ARG RUN_WHEEL_CHECK=true
+RUN if [ "$RUN_WHEEL_CHECK" = "true" ]; then \
+        python3 check-wheel-size.py dist; \
+    else \
+        echo "Skipping wheel size check."; \
+    fi
 #################### EXTENSION Build IMAGE ####################
 
 #################### DEV IMAGE ####################
@@ -165,22 +140,6 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m pip install -r requirements-dev.txt
 
 #################### DEV IMAGE ####################
-#################### MAMBA Build IMAGE ####################
-FROM dev as mamba-builder
-# max jobs used for build
-ARG max_jobs=2
-ENV MAX_JOBS=${max_jobs}
-
-WORKDIR /usr/src/mamba
-
-COPY requirements-mamba.txt requirements-mamba.txt
-
-# Download the wheel or build it if a pre-compiled release doesn't exist
-RUN pip --verbose wheel -r requirements-mamba.txt \
-    --no-build-isolation --no-deps --no-cache-dir
-
-#################### MAMBA Build IMAGE ####################
-
 #################### vLLM installation IMAGE ####################
 # image with vLLM installed
 # FROM nvidia/cuda:${CUDA_VERSION}-base-ubuntu20.04 AS vllm-base
@@ -189,23 +148,28 @@ FROM mirror.ccs.tencentyun.com/nvidia/cuda:${CUDA_VERSION}-base-ubuntu20.04 AS v
 ARG CUDA_VERSION=12.4.1
 ARG PYTHON_VERSION=3.10
 WORKDIR /vllm-workspace
+ENV DEBIAN_FRONTEND=noninteractive
+ARG proxy_val=""
+ENV http_proxy=$proxy_val
+ENV https_proxy=$proxy_val
 
-RUN echo 'tzdata tzdata/Areas select America' | debconf-set-selections \
-    && echo 'tzdata tzdata/Zones/America select Los_Angeles' | debconf-set-selections \
+RUN PYTHON_VERSION_STR=$(echo ${PYTHON_VERSION} | sed 's/\.//g') && \
+    echo "export PYTHON_VERSION_STR=${PYTHON_VERSION_STR}" >> /etc/environment
+
+# RUN sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
+# Install Python and other dependencies
+RUN echo 'tzdata tzdata/Areas select Asia' | debconf-set-selections \
+    && echo 'tzdata tzdata/Zones/Asia select Shanghai' | debconf-set-selections \
     && apt-get update -y \
-    && apt-get install -y ccache software-properties-common \
+    && apt-get install -y ccache software-properties-common git curl sudo vim python3-pip \
     && add-apt-repository ppa:deadsnakes/ppa \
     && apt-get update -y \
-    && apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv \
-    && if [ "${PYTHON_VERSION}" != "3" ]; then update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1; fi \
-    && python3 --version
-
-RUN apt-get update -y \
-    && apt-get install -y python3-pip git vim curl libibverbs-dev
-
-# Install pip s.t. it will be compatible with our PYTHON_VERSION
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION}
-RUN python3 -m pip --version
+    && apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv libibverbs-dev \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
+    && update-alternatives --set python3 /usr/bin/python${PYTHON_VERSION} \
+    && ln -sf /usr/bin/python${PYTHON_VERSION}-config /usr/bin/python3-config \
+    && curl -sS https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION} \
+    && python3 --version && python3 -m pip --version
 
 RUN pip config set global.index-url https://mirrors.cloud.tencent.com/pypi/simple
 RUN pip config set install.trusted-host mirrors.cloud.tencent.com
@@ -221,12 +185,9 @@ RUN --mount=type=bind,from=build,src=/workspace/dist,target=/vllm-workspace/dist
     --mount=type=cache,target=/root/.cache/pip \
     python3 -m pip install dist/*.whl --verbose
 
-RUN --mount=type=bind,from=mamba-builder,src=/usr/src/mamba,target=/usr/src/mamba \
-    --mount=type=cache,target=/root/.cache/pip \
-    python3 -m pip install /usr/src/mamba/*.whl --no-cache-dir
-
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python3 -m pip install https://github.com/flashinfer-ai/flashinfer/releases/download/v0.1.2/flashinfer-0.1.2+cu121torch2.4-cp310-cp310-linux_x86_64.whl
+    . /etc/environment && \
+    python3 -m pip install https://github.com/flashinfer-ai/flashinfer/releases/download/v0.1.6/flashinfer-0.1.6+cu121torch2.4-cp${PYTHON_VERSION_STR}-cp${PYTHON_VERSION_STR}-linux_x86_64.whl
 #################### vLLM installation IMAGE ####################
 
 

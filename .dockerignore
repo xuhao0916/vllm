@@ -4,3 +4,6 @@
 .github/
 .vscode/
 vllm/*.so
+/.venv
+/build
+dist
